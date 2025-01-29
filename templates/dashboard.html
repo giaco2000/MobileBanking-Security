@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mobile Banking - Dashboard</title>
+    <!-- Stessi collegamenti CSS e font del tuo index.html -->
+    <link rel="stylesheet" href="/static/css/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <!-- Header con navbar -->
+    <nav class="nav-bar">
+        <div class="nav-brand">Mobile Banking</div>
+        <div class="nav-user">
+            <span class="user-name">{{ user.name }}</span>
+            <a href="/logout" class="logout-btn">Logout</a>
+        </div>
+    </nav>
+
+    <!-- Container principale -->
+    <div class="dashboard-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="menu-items">
+                <a href="#" class="menu-item active" data-section="overview">
+                    <span class="menu-icon">📊</span>
+                    Overview
+                </a>
+                <a href="#" class="menu-item" data-section="transactions">
+                    <span class="menu-icon">💸</span>
+                    Transazioni
+                </a>
+                <a href="#" class="menu-item" data-section="exchange">
+                    <span class="menu-icon">💱</span>
+                    Tassi di Cambio
+                </a>
+                <a href="#" class="menu-item" data-section="cards">
+                    <span class="menu-icon">💳</span>
+                    Gestione Carte
+                </a>
+            </div>
+        </div>
+
+        <!-- Contenuto principale -->
+        <div class="main-content">
+            <!-- Sezione Overview -->
+            <section id="overview" class="content-section active">
+                <h2>Overview</h2>
+                <div class="balance-card">
+                    <div class="balance-header">Saldo Disponibile</div>
+                    <div class="balance-amount">€ {{ balance }}</div>
+                </div>
+                
+                <div class="deposit-section">
+                    <button onclick="showDepositModal()" class="deposit-btn">
+                        <span class="btn-icon">+</span>
+                        Aggiungi Fondi
+                    </button>
+                </div>
+
+                <!-- Modale per il deposito -->
+                <div id="depositModal" class="modal">
+                    <div class="modal-content">
+                        <h3>Deposita Fondi</h3>
+                        <form id="depositForm">
+                            <input type="number" id="depositAmount" min="0.01" step="0.01" placeholder="Importo da depositare" required>
+                            <button type="submit" class="submit-btn">Procedi con il Deposito</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Modale per il setup 2FA -->
+                <div id="setupTwoFactorModal" class="modal">
+                    <div class="modal-content">
+                        <h3>Configura Autenticazione Due Fattori</h3>
+                        <p>Per procedere con le operazioni di deposito, devi prima configurare l'autenticazione a due fattori:</p>
+                        <ol>
+                            <li>Scarica un'app di autenticazione (Google Authenticator o Duo Mobile)</li>
+                            <li>Apri l'app e scansiona questo QR code:</li>
+                        </ol>
+                        <div id="qrCodeContainer"></div>
+                        <p>Inserisci il codice mostrato nella tua app:</p>
+                        <form id="twoFactorForm">
+                            <input type="text" id="otpCode" placeholder="Codice 2FA" required>
+                            <button type="submit" class="submit-btn">Verifica e Deposita</button>
+                        </form>
+                    </div>
+                </div>
+
+            </section>
+            
+            <!-- Sezione Transazioni -->
+            <section id="transactions" class="content-section">
+                <h2>Transazioni</h2>
+                <div class="new-transaction-card">
+                    <h3>Nuova Transazione</h3>
+                    <form id="transaction-form" class="transaction-form">
+                        <input type="text" placeholder="Beneficiario" required>
+                        <input type="number" placeholder="Importo" required>
+                        <input type="text" placeholder="Causale" required>
+                        <button type="submit" class="submit-btn">Invia</button>
+                    </form>
+                </div>
+                <div class="transactions-list">
+                    <h3>Ultime Transazioni</h3>
+                    <!-- Lista transazioni popolata dinamicamente -->
+                </div>
+            </section>
+
+            <!-- Sezione Tassi di Cambio -->
+<section id="exchange" class="content-section">
+    <h2>Tassi di Cambio</h2>
+    
+    <!-- Card per i tassi di cambio correnti -->
+    <div class="exchange-card">
+        <h3>Tassi di cambio correnti (Base: EUR)</h3>
+        <div id="exchange-rates" class="current-rates">
+            <!-- I tassi verranno inseriti qui dinamicamente -->
+        </div>
+    </div>
+
+    <!-- Card per il convertitore -->
+    <div class="exchange-card">
+        <h3>Convertitore di valuta</h3>
+        <div class="exchange-form">
+            <input type="number" id="amount-to-convert" placeholder="Importo in EUR">
+            <select id="target-currency">
+                <option value="USD">USD - Dollaro americano</option>
+                <option value="GBP">GBP - Sterlina britannica</option>
+                <option value="JPY">JPY - Yen giapponese</option>
+                <option value="CHF">CHF - Franco svizzero</option>
+                <option value="AUD">AUD - Dollaro australiano</option>
+            </select>
+            <button onclick="convertCurrency()" class="convert-btn">Converti</button>
+        </div>
+        <div id="conversion-result" class="exchange-result"></div>
+    </div>
+</section>
+
+            <!-- Sezione Gestione Carte -->
+            <section id="cards" class="content-section">
+                <h2>Gestione Carte</h2>
+                <div class="cards-grid">
+                    <!-- Carte popolate dinamicamente -->
+                </div>
+            </section>
+        </div>
+    </div>
+
+    <!-- Script JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
