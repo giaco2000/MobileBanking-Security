@@ -1,4 +1,5 @@
 import hashlib
+import re
 import traceback
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
 from flask_session import Session
@@ -23,6 +24,8 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
 import pyotp
+import uuid
+import traceback
 
 
 # Carica le variabili dal file .env
@@ -67,7 +70,7 @@ talisman = Talisman(
             "'self'", 
             "https://alcdn.msauth.net", 
             "https://cdn.jsdelivr.net",
-            "https://cdnjs.cloudflare.com",  # Aggiungi questa riga
+            "https://cdnjs.cloudflare.com",  # Aggiunta questa riga per il qr code
             "'unsafe-inline'"
         ],
         'style-src': ["'self'", "https://fonts.googleapis.com", "'unsafe-inline'"],
@@ -114,6 +117,73 @@ def decrypt_data(encrypted_data, key):
     except Exception as e:
         print(f"Errore durante la decrittografia: {e}")
         raise
+
+
+# Validazione IBAN lato server
+def calculate_iban_check_digits(iban):
+    """Calcola le cifre di controllo di un IBAN"""
+    # Rimuove spazi e converte in maiuscolo
+    iban = iban.replace(' ', '').upper()
+    # Sposta i primi 4 caratteri alla fine
+    iban = iban[4:] + iban[:4]
+    # Converte lettere in numeri (A=10, B=11, ecc.)
+    numerical = ''
+    for char in iban:
+        if char.isalpha():
+            numerical += str(ord(char) - ord('A') + 10)
+        else:
+            numerical += char
+    # Calcola il modulo
+    return 98 - (int(numerical) % 97)
+
+def validate_iban(iban):
+    """Valida un IBAN"""
+    try:
+        # Log per debug
+        print(f"Validazione IBAN originale: {iban}")
+        
+        # Rimuove spazi e converte in maiuscolo
+        iban = iban.replace(' ', '').upper()
+        print(f"IBAN formattato: {iban}")
+
+        # Per IBAN italiani (che iniziano con IT)
+        if iban.startswith('IT'):
+            # Verifica lunghezza (27 caratteri per IBAN italiano)
+            if len(iban) != 27:
+                print(f"Lunghezza IBAN non valida. Attuale: {len(iban)}, Richiesta: 27")
+                return False
+
+            # Verifica pattern per IBAN italiano:
+            # IT: codice paese (2 caratteri)
+            # 12: cifre di controllo (2 numeri)
+            # A: CIN (1 lettera)
+            # 12345: ABI (5 numeri)
+            # 12345: CAB (5 numeri)
+            # 123456789012: Numero di conto (12 caratteri)
+            iban_pattern = r'^IT\d{2}[A-Z]\d{5}\d{5}[A-Z0-9]{12}$'
+            if not re.match(iban_pattern, iban):
+                print("Pattern IBAN non valido")
+                return False
+            
+            print("IBAN valido")
+            return True
+        else:
+            # Per IBAN di altri paesi
+            # Verifica base: almeno 2 lettere paese + 2 cifre di controllo
+            if not re.match(r'^[A-Z]{2}\d{2}', iban):
+                print("Formato base IBAN non valido")
+                return False
+            
+            # Verifica lunghezza minima e massima generale
+            if len(iban) < 15 or len(iban) > 27:
+                print(f"Lunghezza IBAN non valida. Attuale: {len(iban)}")
+                return False
+            
+            return True
+
+    except Exception as e:
+        print(f"Errore nella validazione IBAN: {str(e)}")
+        return False
 
 # Funzioni per gestire le transazioni
 def create_transaction(encrypted_user_email, amount, recipient, description):
@@ -187,7 +257,7 @@ def microsoft_login():
 def microsoft_callback():
     code = request.args.get('code')
     if not code:
-        print("Parametri ricevuti:", request.args)  # Aggiungi questo per debug
+        print("Parametri ricevuti:", request.args)  
         return "Errore: codice di autorizzazione mancante", 400
 
     try:
@@ -228,30 +298,34 @@ def microsoft_callback():
         encrypted_email = encrypt_data(email, key)
         doc_id = hashlib.sha256(email.encode()).hexdigest()[:20]
 
-        user_data = {
-        "email": encrypted_email,
-        "name": user_info.get('displayName', 'Anonymous'),
-        "login_method": "Microsoft",
-        "last_login": firestore.SERVER_TIMESTAMP,
-    }
-
-        # Genera e salva la chiave 2FA se non esiste
+        # Ottieni il documento utente esistente
         user_ref = db.collection('users').document(doc_id)
         user_doc = user_ref.get()
         
+        # Prepara i dati dell'utente
+        user_data = {
+            "email": encrypted_email,
+            "name": user_info.get('displayName', 'Anonymous'),
+            "login_method": "Microsoft",
+            "last_login": firestore.SERVER_TIMESTAMP,
+        }
+
         if user_doc.exists:
             # Se l'utente esiste, mantieni il saldo esistente
             existing_data = user_doc.to_dict()
             user_data['balance'] = existing_data.get('balance', 0)
+            if '2fa_secret' in existing_data:
+                user_data['2fa_secret'] = existing_data['2fa_secret']
+                user_data['2fa_enabled'] = existing_data.get('2fa_enabled', False)
         else:
-        # Se è un nuovo utente, inizializza il saldo a 0
+            # Se è un nuovo utente, inizializza il saldo e la 2FA
             user_data['balance'] = 0
-
-        if not user_doc.exists or not user_doc.to_dict().get('2fa_secret'):
             secret = pyotp.random_base32()
-            encrypted_secret = encrypt_data(secret, key)
-            user_data['2fa_secret'] = encrypted_secret
+            user_data['2fa_secret'] = encrypt_data(secret, key)
+            user_data['2fa_enabled'] = False
+            user_data['transactions'] = []
 
+        # Aggiorna o crea il documento utente
         user_ref.set(user_data, merge=True)
         session['user'] = doc_id
 
@@ -328,30 +402,34 @@ def github_callback():
         encrypted_email = encrypt_data(primary_email, key)
         doc_id = hashlib.sha256(primary_email.encode()).hexdigest()[:20]
 
-        user_data = {
-        "email": encrypted_email,
-        "name": user_info.get('name', 'Anonymous'),
-        "login_method": "GitHub",
-        "last_login": firestore.SERVER_TIMESTAMP,
-    }
-
-        # Genera e salva la chiave 2FA se non esiste
+        # Ottieni il documento utente esistente
         user_ref = db.collection('users').document(doc_id)
         user_doc = user_ref.get()
         
+        # Prepara i dati dell'utente
+        user_data = {
+            "email": encrypted_email,
+            "name": user_info.get('name', 'Anonymous'),
+            "login_method": "GitHub",
+            "last_login": firestore.SERVER_TIMESTAMP,
+        }
+
         if user_doc.exists:
-        # Se l'utente esiste, mantieni il saldo esistente
+            # Se l'utente esiste, mantieni il saldo esistente
             existing_data = user_doc.to_dict()
             user_data['balance'] = existing_data.get('balance', 0)
+            if '2fa_secret' in existing_data:
+                user_data['2fa_secret'] = existing_data['2fa_secret']
+                user_data['2fa_enabled'] = existing_data.get('2fa_enabled', False)
         else:
-        # Se è un nuovo utente, inizializza il saldo a 0
+            # Se è un nuovo utente, inizializza il saldo e la 2FA
             user_data['balance'] = 0
-
-        if not user_doc.exists or not user_doc.to_dict().get('2fa_secret'):
             secret = pyotp.random_base32()
-            encrypted_secret = encrypt_data(secret, key)
-            user_data['2fa_secret'] = encrypted_secret
+            user_data['2fa_secret'] = encrypt_data(secret, key)
+            user_data['2fa_enabled'] = False
+            user_data['transactions'] = []
 
+        # Aggiorna o crea il documento utente
         user_ref.set(user_data, merge=True)
         session['user'] = doc_id
 
@@ -396,28 +474,149 @@ def get_transactions():
         return jsonify({"error": "Non autorizzato"}), 401
 
     try:
-        encrypted_email = session['user']
+        # Ottieni il documento utente
+        user_ref = db.collection('users').document(session['user'])
+        user_doc = user_ref.get()
 
-        transactions = (
-            db.collection('transactions')
-            .where('user_email', '==', encrypted_email)
-            .order_by('date', direction=firestore.Query.DESCENDING)
-            .limit(10)
-            .stream()
-        )
+        if not user_doc.exists:
+            return jsonify({"error": "Utente non trovato"}), 404
 
-        transactions_list = []
-        for trans in transactions:
-            trans_data = trans.to_dict()
-            trans_data['id'] = trans.id
-            if isinstance(trans_data['date'], datetime):
-                trans_data['date'] = trans_data['date'].isoformat()
-            transactions_list.append(trans_data)
+        user_data = user_doc.to_dict()
+        transactions = user_data.get('transactions', [])
 
-        return jsonify({"transactions": transactions_list})
+        # Ottieni la chiave AES
+        key = os.getenv("AES_KEY")
+        if not key:
+            return jsonify({"error": "Errore di configurazione"}), 500
+
+        # Decifra i dati sensibili per ogni transazione
+        decrypted_transactions = []
+        for trans in sorted(transactions, key=lambda x: x['date'], reverse=True)[:10]:
+            decrypted_trans = {
+                'type': trans['type'],
+                'amount': trans['amount'],
+                'recipient': decrypt_data(trans['recipient'], key),
+                'iban': decrypt_data(trans['iban'], key),
+                'description': decrypt_data(trans['description'], key),
+                'date': trans['date'],
+                'status': trans['status'],
+                'transaction_id': trans['transaction_id']
+            }
+            decrypted_transactions.append(decrypted_trans)
+
+        return jsonify({"transactions": decrypted_transactions})
 
     except Exception as e:
         print(f"Errore nel recupero delle transazioni: {e}")
+        print(traceback.format_exc())
+        return jsonify({"error": "Errore interno"}), 500
+
+
+# transazioni verificate
+@app.route('/api/transactions/verify', methods=['POST'])
+@limiter.limit("10 per minute")
+def verify_transaction():
+    if 'user' not in session:
+        return jsonify({"error": "Non autorizzato"}), 401
+
+    try:
+        data = request.json
+        print("Dati transazione ricevuti:", data)  # Debug log
+
+        if not data or 'otp' not in data or 'iban' not in data:
+            return jsonify({"error": "Dati mancanti"}), 400
+        
+        if 'iban' not in data:
+            return jsonify({"error": "Dati mancanti - IBAN richiesto"}), 400
+
+        # Validazione IBAN
+        if not validate_iban(data['iban']):
+            return jsonify({"error": "IBAN non valido. Formato richiesto: IT00X0000000000000000000000"}), 400
+
+
+        # Ottieni il documento utente
+        user_ref = db.collection('users').document(session['user'])
+        user_doc = user_ref.get()
+
+        
+        if not user_doc.exists:
+            return jsonify({"error": "Utente non trovato"}), 404
+
+        user_data = user_doc.to_dict()
+
+        # Verifica 2FA
+        key = os.getenv("AES_KEY")
+        if not key:
+            return jsonify({"error": "Errore di configurazione"}), 500
+
+        secret = decrypt_data(user_data['2fa_secret'], key)
+        totp = pyotp.TOTP(secret)
+
+        # Aggiungiamo più debug logs
+        print(f"Codice ricevuto: {data['otp']}")
+        print(f"Secret decifrato: {secret}")
+        
+        if not totp.verify(data['otp'], valid_window=1):
+            print("Verifica 2FA fallita")
+            return jsonify({"error": "Codice 2FA non valido"}), 400
+
+        # Verifica il saldo
+        current_balance = user_data.get('balance', 0)
+        transaction_amount = float(data['amount'])
+
+        if current_balance < transaction_amount:
+            return jsonify({"error": "Saldo insufficiente"}), 400
+
+        # Prepara i dati cifrati della transazione
+        transaction_data = {
+            'type': 'out',
+            'amount': transaction_amount,
+            'recipient': encrypt_data(data['recipient'], key),
+            'iban': encrypt_data(data['iban'], key),
+            'description': encrypt_data(data.get('description', ''), key),
+            'date': datetime.now().isoformat(),
+            'status': 'completed',
+            'transaction_id': str(uuid.uuid4())
+        }
+
+        # Calcola il nuovo saldo
+        new_balance = current_balance - transaction_amount
+
+        # Aggiorna il documento dell'utente
+        transactions = user_data.get('transactions', [])
+        transactions.append(transaction_data)
+        
+        user_ref.update({
+            'balance': new_balance,
+            'transactions': transactions
+        })
+
+        # Prepara le transazioni decifrate per il client
+        decrypted_transactions = []
+        for trans in sorted(transactions, key=lambda x: x['date'], reverse=True)[:10]:
+            decrypted_trans = {
+                'type': trans['type'],
+                'amount': trans['amount'],
+                'recipient': decrypt_data(trans['recipient'], key),
+                'iban': decrypt_data(trans['iban'], key),
+                'description': decrypt_data(trans['description'], key),
+                'date': trans['date'],
+                'status': trans['status'],
+                'transaction_id': trans['transaction_id']
+            }
+            decrypted_transactions.append(decrypted_trans)
+
+        return jsonify({
+            "message": "Transazione completata con successo",
+            "new_balance": new_balance,
+            "transactions": decrypted_transactions
+        })
+
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        print(f"Errore nella verifica della transazione: {e}")
+        print(traceback.format_exc())
         return jsonify({"error": "Errore interno"}), 500
 
 

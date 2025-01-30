@@ -418,21 +418,87 @@ input:focus, select:focus {
     background: #0b5ed7;
 }
 
-/* Lista Transazioni */
+/* Stili per il form delle transazioni */
+.new-transaction-card {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    margin-bottom: 30px;
+}
+
+.form-group {
+    margin-bottom: 20px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 8px;
+    color: #333;
+    font-weight: 500;
+}
+
+.form-group input {
+    width: 100%;
+    padding: 12px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 16px;
+    transition: border-color 0.3s ease;
+}
+
+.form-group input:focus {
+    border-color: #0d6efd;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(13, 110, 253, 0.25);
+}
+
+.form-hint {
+    display: block;
+    margin-top: 5px;
+    color: #666;
+    font-size: 0.85em;
+}
+
+.submit-btn {
+    width: 100%;
+    padding: 14px;
+    background: #0d6efd;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.submit-btn:hover {
+    background: #0b5ed7;
+}
+
+.submit-btn:active {
+    transform: translateY(1px);
+}
+
+/* Stili per lo storico transazioni */
+.transactions-history {
+    background: white;
+    padding: 25px;
+    border-radius: 10px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
 .transactions-list {
-    margin-top: 30px;
+    margin-top: 20px;
 }
 
-.transaction-item {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 15px;
-    border-bottom: 1px solid #eee;
-}
-
-.transaction-item:last-child {
-    border-bottom: none;
+.no-transactions {
+    text-align: center;
+    padding: 30px;
+    color: #666;
+    background: #f8f9fa;
+    border-radius: 8px;
 }
 
 /* Convertitore Valuta */

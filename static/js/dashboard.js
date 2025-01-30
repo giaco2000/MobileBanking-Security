@@ -50,6 +50,15 @@ async function loadDashboardData() {
     }
 }
 
+// Aggiunte queste nuove funzioni per la validazione IBAN
+function validateIBAN(iban) {
+    const ibanPattern = /^[A-Z]{2}[0-9]{2}[A-Z0-9]{4}[0-9]{7}([A-Z0-9]?){0,16}$/;
+    return ibanPattern.test(iban.replace(/\s/g, ''));
+}
+
+function formatIBAN(iban) {
+    return iban.replace(/\s/g, '').replace(/(.{4})/g, '$1 ').trim();
+}
 
 // Funzione per mostrare il modale di deposito
 async function showDepositModal() {
@@ -176,23 +185,45 @@ function updateTransactionsList(transactions) {
     const transactionsList = document.querySelector('.transactions-list');
     if (!transactionsList) return;
 
-    transactionsList.innerHTML = '<h3>Ultime Transazioni</h3>';
+    transactionsList.innerHTML = '';
+    
+    if (!transactions || transactions.length === 0) {
+        transactionsList.innerHTML = `
+            <div class="no-transactions">
+                <p>Nessuna transazione effettuata</p>
+            </div>
+        `;
+        return;
+    }
     
     transactions.forEach(transaction => {
         const transactionItem = document.createElement('div');
         transactionItem.className = 'transaction-item';
+        
+        const amountClass = transaction.type === 'out' ? 'text-danger' : 'text-success';
+        const amountPrefix = transaction.type === 'out' ? '-' : '+';
+        const formattedDate = new Date(transaction.date).toLocaleString('it-IT');
+
         transactionItem.innerHTML = `
             <div class="transaction-info">
-                <div class="transaction-name">${transaction.recipient}</div>
-                <div class="transaction-date">${new Date(transaction.date).toLocaleDateString()}</div>
-            </div>
-            <div class="transaction-amount ${transaction.type === 'out' ? 'text-danger' : 'text-success'}">
-                ${transaction.type === 'out' ? '-' : '+'} € ${transaction.amount.toFixed(2)}
+                <div class="transaction-header">
+                    <span class="transaction-name">${transaction.recipient}</span>
+                    <span class="transaction-amount ${amountClass}">
+                        ${amountPrefix} € ${transaction.amount.toFixed(2)}
+                    </span>
+                </div>
+                <div class="transaction-details">
+                    <div class="transaction-iban">IBAN: ${formatIBAN(transaction.iban)}</div>
+                    <div class="transaction-description">${transaction.description}</div>
+                    <div class="transaction-date">${formattedDate}</div>
+                </div>
             </div>
         `;
+        
         transactionsList.appendChild(transactionItem);
     });
 }
+
 
 // Gestione del form delle transazioni
 const transactionForm = document.getElementById('transaction-form');
@@ -201,34 +232,112 @@ if (transactionForm) {
         e.preventDefault();
         
         const formData = new FormData(transactionForm);
+        const iban = formData.get('iban').replace(/\s/g, '');
+        const amount = parseFloat(formData.get('amount'));
+
+        if (!validateIBAN(iban)) {
+            showError('IBAN non valido');
+            return;
+        }
+
         const transactionData = {
-            recipient: formData.get('recipient'),
-            amount: parseFloat(formData.get('amount')),
+            recipient: formData.get('beneficiary'),
+            iban: iban,
+            amount: amount,
             description: formData.get('description')
         };
 
         try {
-            const response = await fetch('/api/transactions', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify(transactionData)
-            });
+            // Verifica saldo
+            const balanceResponse = await fetch('/api/balance');
+            const balanceData = await balanceResponse.json();
+            
+            if (balanceData.balance < amount) {
+                showError('Saldo insufficiente per effettuare questa transazione');
+                return;
+            }
 
-            if (response.ok) {
-                showSuccess('Transazione completata con successo');
-                transactionForm.reset();
-                loadDashboardData();
+            // Verifica stato 2FA
+            const twoFAResponse = await fetch('/api/2fa/check-status');
+            const twoFAData = await twoFAResponse.json();
+
+            if (!twoFAData.is_configured) {
+                // Se 2FA non è configurato, usa il setup esistente
+                const setupResponse = await fetch('/api/2fa/setup');
+                const setupData = await setupResponse.json();
+                
+                if (setupData.qr_uri) {
+                    const qrCodeContainer = document.getElementById('qrCodeContainer');
+                    qrCodeContainer.innerHTML = '';
+                    
+                    const canvas = document.createElement('canvas');
+                    qrCodeContainer.appendChild(canvas);
+                    
+                    new QRious({
+                        element: canvas,
+                        value: setupData.qr_uri,
+                        size: 256
+                    });
+                    
+                    document.getElementById('setupTwoFactorModal').style.display = "block";
+                    sessionStorage.setItem('pendingTransaction', JSON.stringify(transactionData));
+                }
             } else {
-                const error = await response.json();
-                showError(error.message || 'Errore durante la transazione');
+                // Se 2FA è già configurato, mostra direttamente il modale OTP
+                document.getElementById('transactionOtpModal').style.display = 'block';
+                sessionStorage.setItem('pendingTransaction', JSON.stringify(transactionData));
             }
         } catch (error) {
-            showError('Si è verificato un errore di rete');
+            console.error('Errore:', error);
+            showError('Si è verificato un errore durante la verifica');
         }
     });
 }
+
+// Aggiunto il gestore per la verifica OTP delle transazioni
+document.getElementById('transactionOtpForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const code = document.getElementById('transactionOtpCode').value;
+    const transactionData = JSON.parse(sessionStorage.getItem('pendingTransaction'));
+    
+    try {
+        console.log('Dati transazione:', transactionData); // Per debug
+        
+        const response = await fetch('/api/transactions/verify', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ 
+                otp: code,
+                ...transactionData
+            })
+        });
+
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Errore durante la transazione');
+        }
+
+        // Se la transazione va a buon fine
+        updateBalance(data.new_balance);
+        updateTransactionsList(data.transactions);
+        
+        // Chiudi il modale e pulisci i form
+        document.getElementById('transactionOtpModal').style.display = 'none';
+        document.getElementById('transaction-form').reset();
+        document.getElementById('transactionOtpForm').reset();
+        sessionStorage.removeItem('pendingTransaction');
+        
+        showSuccess('Transazione completata con successo');
+    } catch (error) {
+        console.error('Errore:', error);
+        showError(error.message || 'Errore durante la transazione');
+    }
+});
+
 
 // Tassi di cambio
 async function loadExchangeRates() {
