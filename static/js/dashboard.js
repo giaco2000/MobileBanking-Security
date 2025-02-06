@@ -23,6 +23,13 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // Aggiorna il loadDashboardData per includere i token
+    const originalLoadDashboardData = loadDashboardData;
+    loadDashboardData = async function() {
+        await originalLoadDashboardData();
+        loadActiveTokens();
+};
+
     // Carica i dati iniziali
     loadDashboardData();
 });
@@ -32,11 +39,18 @@ document.addEventListener('DOMContentLoaded', function() {
 // Funzione per caricare i dati della dashboard
 async function loadDashboardData() {
     try {
-        // Carica il saldo
+
+        // Carica il saldo (senza JWT)
         const balanceResponse = await fetch('/api/balance');
         const balanceData = await balanceResponse.json();
-        updateBalance(balanceData.balance);
-
+        if (balanceData.balance !== undefined) {
+            const balanceAmount = document.getElementById('balance-amount');
+            if (balanceAmount) {
+                balanceAmount.textContent = `€ ${balanceData.balance.toFixed(2)}`;
+                // Inizialmente nascondiamo il saldo
+                balanceAmount.style.display = 'none';
+            }
+        }
         // Carica le transazioni
         const transactionsResponse = await fetch('/api/transactions');
         const transactionsData = await transactionsResponse.json();
@@ -49,6 +63,247 @@ async function loadDashboardData() {
         showError('Si è verificato un errore nel caricamento dei dati');
     }
 }
+
+// Aggiorniamo la funzione per mostrare/nascondere il saldo
+function toggleBalanceVisibility() {
+    const balanceAmount = document.getElementById('balance-amount');
+    if (balanceAmount) {
+        if (balanceAmount.style.display === 'none') {
+            balanceAmount.style.display = 'block';
+        } else {
+            balanceAmount.style.display = 'none';
+        }
+    }
+}
+
+// Funzione per copiare il codice dell'esempio
+async function copyCode(button) {
+    const code = button.dataset.code;
+    try {
+        await navigator.clipboard.writeText(code);
+        
+        // Feedback visivo temporaneo
+        const originalIcon = button.innerHTML;
+        button.innerHTML = '✅';
+        button.style.opacity = '1';
+        
+        setTimeout(() => {
+            button.innerHTML = originalIcon;
+            button.style.opacity = '0.7';
+        }, 2000);
+        
+        showSuccess('Codice copiato negli appunti');
+    } catch (error) {
+        console.error('Errore nella copia:', error);
+        showError('Errore nella copia del codice');
+    }
+}
+
+// Aggiorna la URL nell'esempio quando viene generato un nuovo token
+function updateApiExample(token) {
+    const codeBlocks = document.querySelectorAll('.code-block code');
+    const copyButtons = document.querySelectorAll('.copy-btn');
+    const currentUrl = window.location.origin;
+    
+    const curlCommand = `curl -H "Authorization: Bearer ${token}" ${currentUrl}/api/balance`;
+    
+    codeBlocks.forEach(block => {
+        if (block.textContent.includes('curl')) {
+            block.textContent = curlCommand;
+        }
+    });
+    
+    copyButtons.forEach(button => {
+        if (button.dataset.code.includes('curl')) {
+            button.dataset.code = curlCommand;
+        }
+    });
+}
+
+
+// Funzione per mostrare il modale di verifica JWT
+function showJwtVerificationModal() {
+    document.getElementById('jwtVerificationModal').style.display = 'block';
+}
+
+// Funzione per toggle visibilità JWT
+function toggleJwtVisibility() {
+    const jwtInput = document.getElementById('jwtToken');
+    jwtInput.type = jwtInput.type === 'password' ? 'text' : 'password';
+}
+
+// Gestione della verifica JWT
+document.getElementById('jwtVerificationForm').addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const token = document.getElementById('jwtToken').value;
+    
+    try {
+        const response = await fetch('/api/balance', {
+            headers: {
+                'Authorization': `Bearer ${token}`
+            }
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Mostra il saldo
+            document.getElementById('balance-hidden').style.display = 'none';
+            const balanceAmount = document.getElementById('balance-amount');
+            balanceAmount.textContent = `€ ${data.balance.toFixed(2)}`;
+            balanceAmount.style.display = 'block';
+            
+            // Chiudi il modale
+            document.getElementById('jwtVerificationModal').style.display = 'none';
+            
+            // Reset form
+            this.reset();
+            
+            showSuccess('Saldo verificato con successo');
+        } else {
+            showError(data.error || 'Token non valido');
+        }
+    } catch (error) {
+        console.error('Errore:', error);
+        showError('Errore nella verifica del saldo');
+    }
+});
+
+// Funzioni per la gestione dei token API
+async function loadActiveTokens() {
+    try {
+        const response = await fetch('/api/tokens');
+        const data = await response.json();
+        
+        const tokensList = document.getElementById('tokens-list');
+        if (!tokensList) return;
+
+        if (!data.tokens || data.tokens.length === 0) {
+            tokensList.innerHTML = '<p class="no-tokens">Nessun token attivo</p>';
+            return;
+        }
+
+        tokensList.innerHTML = data.tokens.map(token => `
+            <div class="token-item">
+                <div class="token-info">
+                    <div class="token-description">${token.description}</div>
+                    <div class="token-dates">
+                        <span>Creato: ${new Date(token.created_at).toLocaleString()}</span>
+                        <span>Scade: ${new Date(token.expires_at).toLocaleString()}</span>
+                    </div>
+                    ${token.last_used ? 
+                        `<div class="token-last-used">Ultimo utilizzo: ${new Date(token.last_used).toLocaleString()}</div>` 
+                        : ''
+                    }
+                </div>
+                <button onclick="revokeToken('${token.token_id}')" class="revoke-btn">
+                    Revoca
+                </button>
+            </div>
+        `).join('');
+    } catch (error) {
+        console.error('Errore nel caricamento dei token:', error);
+        showError('Errore nel caricamento dei token');
+    }
+}
+
+// Gestione del form per generare nuovo token
+document.getElementById('generate-token-form')?.addEventListener('submit', async function(e) {
+    e.preventDefault();
+    
+    const description = document.getElementById('token-description').value;
+    const duration = parseInt(document.getElementById('token-duration').value);
+
+    try {
+        const response = await fetch('/api/token/generate', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                description: description,
+                duration: duration
+            })
+        });
+
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Mostra il token nel modale
+            document.getElementById('tokenField').value = data.token;
+            document.getElementById('tokenCreated').textContent = 
+                `Creato il: ${new Date(data.created_at).toLocaleString()}`;
+            document.getElementById('tokenExpiry').textContent = 
+                `Scade il: ${new Date(data.expires_at).toLocaleString()}`;
+            
+            document.getElementById('tokenModal').style.display = 'block';
+            
+            // Reset form e ricarica lista
+            this.reset();
+            loadActiveTokens();
+        } else {
+            showError(data.error || 'Errore nella generazione del token');
+        }
+    } catch (error) {
+        console.error('Errore:', error);
+        showError('Errore nella generazione del token');
+    }
+});
+
+// Funzione per revocare un token
+async function revokeToken(tokenId) {
+    if (!confirm('Sei sicuro di voler revocare questo token?')) return;
+
+    try {
+        console.log('Revocando token:', tokenId); // Debug
+
+        const response = await fetch(`/api/token/revoke/${tokenId}`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
+
+        if (response.ok) {
+            showSuccess('Token revocato con successo');
+            // Ricarica la lista dei token
+            loadActiveTokens();
+        } else {
+            const data = await response.json();
+            showError(data.error || 'Errore nella revoca del token');
+        }
+    } catch (error) {
+        console.error('Errore:', error);
+        showError('Errore nella revoca del token');
+    }
+}
+
+// Funzioni per gestire il modale del token
+function toggleTokenVisibility() {
+    const tokenField = document.getElementById('tokenField');
+    if (tokenField.type === 'password') {
+        tokenField.type = 'text';
+    } else {
+        tokenField.type = 'password';
+    }
+}
+
+async function copyToken() {
+    const tokenField = document.getElementById('tokenField');
+    try {
+        await navigator.clipboard.writeText(tokenField.value);
+        showSuccess('Token copiato negli appunti');
+    } catch (error) {
+        showError('Errore nella copia del token');
+    }
+}
+
+function closeTokenModal() {
+    document.getElementById('tokenModal').style.display = 'none';
+}
+
+
 
 // Aggiunte queste nuove funzioni per la validazione IBAN
 function validateIBAN(iban) {

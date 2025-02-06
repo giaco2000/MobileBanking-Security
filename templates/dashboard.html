@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Mobile Banking - Dashboard</title>
-    <!-- Stessi collegamenti CSS e font del tuo index.html -->
     <link rel="stylesheet" href="/static/css/styles.css">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;700&display=swap" rel="stylesheet">
@@ -40,6 +39,10 @@
                     <span class="menu-icon">💳</span>
                     Gestione Carte
                 </a>
+                <a href="#" class="menu-item" data-section="api-tokens">
+                    <span class="menu-icon">🔑</span>
+                    Token API
+                </a>
             </div>
         </div>
 
@@ -50,8 +53,15 @@
                 <h2>Overview</h2>
                 <div class="balance-card">
                     <div class="balance-header">Saldo Disponibile</div>
-                    <div class="balance-amount">€ {{ balance }}</div>
-                </div>
+                    <div class="balance-wrapper">
+                        <div id="balance-amount" class="balance-amount" style="display: none;">
+                            € {{ balance }}
+                        </div>
+                        <button onclick="toggleBalanceVisibility()" class="toggle-balance-btn">
+                            <span class="eye-icon">👁️</span>
+                        </button>
+                    </div>
+                </div>>
                 
                 <div class="deposit-section">
                     <button onclick="showDepositModal()" class="deposit-btn">
@@ -65,8 +75,26 @@
                     <div class="modal-content">
                         <h3>Deposita Fondi</h3>
                         <form id="depositForm">
-                            <input type="number" id="depositAmount" min="0.01" step="0.01" placeholder="Importo da depositare" required>
+                            <input type="number" id="depositAmount" min="0.01" step="0.01"  placeholder="Importo da depositare" required>
                             <button type="submit" class="submit-btn">Procedi con il Deposito</button>
+                        </form>
+                    </div>
+                </div>
+
+                <!-- Modale per la verifica JWT -->
+                <div id="jwtVerificationModal" class="modal">
+                    <div class="modal-content">
+                        <h3>Verifica Saldo con Token</h3>
+                        <p>Inserisci il token JWT generato nella sezione Token API</p>
+                        <form id="jwtVerificationForm">
+                            <div class="form-group">
+                                <input type="password" id="jwtToken" 
+                                    placeholder="Inserisci il token JWT" required>
+                                <button type="button" onclick="toggleJwtVisibility()" class="icon-btn">
+                                    <span class="eye-icon">👁️</span>
+                                </button>
+                            </div>
+                            <button type="submit" class="submit-btn">Verifica Saldo</button>
                         </form>
                     </div>
                 </div>
@@ -88,9 +116,9 @@
                         </form>
                     </div>
                 </div>
-
             </section>
-            
+
+
             <!-- Sezione Transazioni -->
             <section id="transactions" class="content-section">
                 <h2>Transazioni</h2>
@@ -175,34 +203,37 @@
             </section>
 
             <!-- Sezione Tassi di Cambio -->
-<section id="exchange" class="content-section">
-    <h2>Tassi di Cambio</h2>
-    
-    <!-- Card per i tassi di cambio correnti -->
-    <div class="exchange-card">
-        <h3>Tassi di cambio correnti (Base: EUR)</h3>
-        <div id="exchange-rates" class="current-rates">
-            <!-- I tassi verranno inseriti qui dinamicamente -->
-        </div>
-    </div>
+            <section id="exchange" class="content-section">
+                <h2>Tassi di Cambio</h2>
+                
+                <!-- Card per i tassi di cambio correnti -->
+                <div class="exchange-card">
+                    <h3>Tassi di cambio correnti (Base: EUR)</h3>
+                    <div id="exchange-rates" class="current-rates">
+                        <!-- I tassi verranno inseriti qui dinamicamente -->
+                    </div>
+                </div>
 
-    <!-- Card per il convertitore -->
-    <div class="exchange-card">
-        <h3>Convertitore di valuta</h3>
-        <div class="exchange-form">
-            <input type="number" id="amount-to-convert" placeholder="Importo in EUR">
-            <select id="target-currency">
-                <option value="USD">USD - Dollaro americano</option>
-                <option value="GBP">GBP - Sterlina britannica</option>
-                <option value="JPY">JPY - Yen giapponese</option>
-                <option value="CHF">CHF - Franco svizzero</option>
-                <option value="AUD">AUD - Dollaro australiano</option>
-            </select>
-            <button onclick="convertCurrency()" class="convert-btn">Converti</button>
-        </div>
-        <div id="conversion-result" class="exchange-result"></div>
-    </div>
-</section>
+                <!-- Card per il convertitore -->
+                <div class="exchange-card">
+                    <h3>Convertitore di valuta</h3>
+                    <div class="exchange-form">
+                        <input 
+                            type="number" 
+                            id="amount-to-convert" 
+                            placeholder="Importo in EUR">
+                        <select id="target-currency">
+                            <option value="USD">USD - Dollaro americano</option>
+                            <option value="GBP">GBP - Sterlina britannica</option>
+                            <option value="JPY">JPY - Yen giapponese</option>
+                            <option value="CHF">CHF - Franco svizzero</option>
+                            <option value="AUD">AUD - Dollaro australiano</option>
+                        </select>
+                        <button onclick="convertCurrency()" class="convert-btn">Converti</button>
+                    </div>
+                    <div id="conversion-result" class="exchange-result"></div>
+                </div>
+            </section>
 
             <!-- Sezione Gestione Carte -->
             <section id="cards" class="content-section">
@@ -211,8 +242,92 @@
                     <!-- Carte popolate dinamicamente -->
                 </div>
             </section>
-        </div>
-    </div>
+
+            <!-- Sezione Token API -->
+            <section id="api-tokens" class="content-section">
+                <h2>Token API</h2>
+            
+                <!-- Card per generare nuovo token -->
+                <div class="token-generation-card">
+                    <h3>Genera Nuovo Token</h3>
+                    <form id="generate-token-form" class="token-form">
+                        <div class="form-group">
+                            <label for="token-description">Descrizione</label>
+                            <input type="text" id="token-description" placeholder="Es: Token per lettura saldo" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="token-duration">Durata</label>
+                            <select id="token-duration">
+                                <option value="1">1 giorno</option>
+                                <option value="7">7 giorni</option>
+                                <option value="30">30 giorni</option>
+                            </select>
+                        </div>
+                        <button type="submit" class="submit-btn">Genera Token</button>
+                    </form>
+                </div>
+
+                <!-- Nuova card per la documentazione API -->
+                <div class="api-docs-card">
+                    <h3>Come Utilizzare l'API</h3>
+                    <div class="api-endpoint">
+                        <h4>Endpoint Disponibili</h4>
+                        <div class="endpoint-item">
+                            <span class="endpoint-title">Recupero Saldo</span>
+                            <div class="endpoint-details">
+                                <code class="endpoint-url">GET /api/balance</code>
+                                <div class="code-example">
+                                    <p>Esempio di richiesta con curl:</p>
+                                    <div class="code-block">
+                                        <code>curl -H "Authorization: Bearer YOUR_TOKEN" https://your-domain/api/balance</code>
+                                        <button onclick="copyCode(this)" class="copy-btn" data-code="curl -H &quot;Authorization: Bearer YOUR_TOKEN&quot; https://your-domain/api/balance">
+                                            <span class="copy-icon">📋</span>
+                                        </button>
+                                    </div>
+                                </div>
+                                <div class="response-example">
+                                    <p>Risposta di esempio:</p>
+                                    <pre><code>{
+                "balance": 1000.50
+            }</code></pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Card per visualizzare token attivi -->
+                <div class="active-tokens-card">
+                    <h3>Token Attivi</h3>
+                    <div id="tokens-list" class="tokens-list">
+                        <!-- I token verranno inseriti qui dinamicamente -->
+                    </div>
+                </div>
+
+                <!-- Modale per mostrare il nuovo token -->
+                <div id="tokenModal" class="modal">
+                    <div class="modal-content">
+                        <h3>Token Generato</h3>
+                        <p class="token-warning">Copia questo token ora. Non potrai vederlo di nuovo!</p>
+                        <div class="token-display">
+                            <input type="password" id="tokenField" readonly>
+                            <button onclick="toggleTokenVisibility()" class="icon-btn">
+                                <span class="eye-icon">👁️</span>
+                            </button>
+                            <button onclick="copyToken()" class="icon-btn">
+                                <span class="copy-icon">📋</span>
+                            </button>
+                        </div>
+                        <div class="token-info">
+                            <p id="tokenCreated"></p>
+                            <p id="tokenExpiry"></p>
+                        </div>
+                        <button onclick="closeTokenModal()" class="submit-btn">Ho salvato il token</button>
+                    </div>
+                </div>
+            </section>
+        </div><!-- Chiusura di main-content -->
+    </div><!-- Chiusura di dashboard-container -->
 
     <!-- Script JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/qrious/4.0.2/qrious.min.js"></script>
