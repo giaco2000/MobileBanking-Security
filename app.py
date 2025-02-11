@@ -469,11 +469,9 @@ def generate_token():
 
     try:
         user_id = session['user']
-        duration_days = request.json.get('duration', 1)
+        # Forziamo la durata a 7 giorni
+        duration_days = 7
         
-        if duration_days > 30:
-            return jsonify({"error": "Durata massima consentita: 30 giorni"}), 400
-
         # Genera un token_id univoco
         token_id = str(uuid.uuid4())
         
@@ -484,14 +482,14 @@ def generate_token():
             expires_delta=expires,
             additional_claims={
                 "type": "api_token",
-                "token_id": token_id,  # Includi il token_id nei claims
+                "token_id": token_id,  # Assicuriamoci che il token_id sia nei claims
                 "description": request.json.get('description', 'Token API')
             }
         )
         
         # Salva il token nel database
         token_data = {
-            "token_id": token_id,  # Usa lo stesso token_id
+            "token_id": token_id,  # Stesso token_id usato nei claims
             "user_id": user_id,
             "description": request.json.get('description', 'Token API'),
             "created_at": datetime.now().isoformat(),
@@ -503,18 +501,19 @@ def generate_token():
         # Salva nel database
         db.collection('api_tokens').add(token_data)
 
+        print(f"Token generato con ID: {token_id}")  # Log per debug
+
         return jsonify({
             "token": token,
-            "token_id": token_id,  # Includi il token_id nella risposta
+            "token_id": token_id,
             "created_at": token_data["created_at"],
             "expires_at": token_data["expires_at"],
-            "message": "Token generato con successo"
+            "message": "Token generato con successo. Il token scadrà tra 7 giorni."
         })
 
     except Exception as e:
         print(f"Errore nella generazione del token: {e}")
         return jsonify({"error": "Errore nella generazione del token"}), 500
-
 
 # Route per il recupero dei JWT token
 @app.route('/api/tokens', methods=['GET'])
@@ -581,15 +580,31 @@ def revoke_token(token_id):
 
 # API: Recupero saldo
 @app.route('/api/balance')
-@jwt_required(optional=True)  # Permette sia token JWT che session
+@jwt_required(optional=True)
 @limiter.limit("60 per minute")
 def get_balance():
     jwt_token = get_jwt()
     
+    # Se non c'è token JWT, verifica la sessione
     if not jwt_token and 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
 
     try:
+        # Se c'è un token JWT, verifica che non sia stato revocato
+        if jwt_token and jwt_token.get('type') == 'api_token':
+            token_id = jwt_token.get('token_id')
+            if token_id:
+                # Cerca il token nel database
+                token_query = db.collection('api_tokens')\
+                    .where('token_id', '==', token_id)\
+                    .limit(1)\
+                    .get()
+                
+                # Se il token non esiste o non è attivo, nega l'accesso
+                if not token_query or len(token_query) == 0 or not token_query[0].to_dict().get('is_active', False):
+                    return jsonify({"error": "Token revocato o non valido"}), 401
+
+        # Procedi con il recupero del saldo
         user_id = get_jwt_identity() if jwt_token else session['user']
         
         user_doc = db.collection('users').document(user_id).get()
@@ -597,16 +612,13 @@ def get_balance():
             return jsonify({"error": "Utente non trovato"}), 404
 
         user_data = user_doc.to_dict()
-        balance = round(float(user_data.get('balance', 0)), 2)  # Arrotondiamo a 2 decimali
+        balance = round(float(user_data.get('balance', 0)), 2)
 
-        # Aggiorna last_used se è stato usato un token API
+        # Aggiorna last_used solo se il token è valido
         if jwt_token and jwt_token.get('type') == 'api_token':
-            db.collection('api_tokens')\
-                .where('token_id', '==', jwt_token.get('token_id'))\
-                .limit(1)\
-                .get()[0].reference.update({
-                    'last_used': datetime.now().isoformat()
-                })
+            token_query[0].reference.update({
+                'last_used': datetime.now().isoformat()
+            })
         
         return jsonify({"balance": balance})
 
