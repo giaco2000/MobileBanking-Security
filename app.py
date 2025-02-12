@@ -3,6 +3,7 @@ import re
 import secrets
 import traceback
 from flask import Flask, render_template, request, session, redirect, url_for, jsonify
+import logging
 from flask_session import Session
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
@@ -54,6 +55,18 @@ app.secret_key = os.getenv("SECRET_KEY")
 app.config['SESSION_TYPE'] = 'filesystem'
 Session(app)
 
+# Configurazione avanzata delle sessioni
+app.config.update(
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=1),
+    SESSION_REFRESH_EACH_REQUEST=True
+)
+
+# Logging per debugging sessione
+app.logger.setLevel(logging.INFO)
+
 """
 # Genera una chiave sicura di 32 bytes (256 bit)
 jwt_key = secrets.token_hex(32)
@@ -64,6 +77,14 @@ print(f"JWT_SECRET_KEY={jwt_key}")
 app.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET_KEY")  # Aggiungi questa nel .env
 app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)  # Token validi per 1 giorno
 jwt = JWTManager(app)
+
+# Blacklist per token JWT revocati
+jwt_blacklist = set()
+
+@jwt.token_in_blocklist_loader
+def check_if_token_in_blacklist(jwt_header, jwt_payload):
+    jti = jwt_payload['jti']
+    return jti in jwt_blacklist
 
 
 # Configurazione rate limiter
@@ -96,6 +117,21 @@ talisman = Talisman(
         'connect-src': ["'self'", 'https://login.microsoftonline.com', 'https://github.com']
     }
 )
+
+def rotate_session():
+    """
+    Ruota l'ID della sessione mantenendo i dati esistenti.
+    Da chiamare dopo il login per prevenire session fixation attacks.
+    """
+    try:
+        old_session = dict(session)
+        session.clear()
+        session.update(old_session)
+        session.modified = True
+        app.logger.info(f"Sessione ruotata con successo per l'utente: {session.get('user')}")
+    except Exception as e:
+        app.logger.error(f"Errore durante la rotazione della sessione: {str(e)}")
+        raise
 
 
 # gestore di errori
@@ -253,6 +289,37 @@ def create_transaction(encrypted_user_email, amount, recipient, description):
         print(f"Errore dettagliato nella transazione: {str(e)}")
         raise
 
+#  middleware per il controllo della sessione.
+@app.before_request
+def check_session_expiry():
+    """
+    Middleware per controllare la validità della sessione prima di ogni richiesta.
+    """
+    try:
+        # Ignora le route pubbliche
+        public_routes = ['home', 'static', 'microsoft_login', 'github_login']
+        if not request.endpoint or request.endpoint in public_routes:
+            return
+
+        if 'user' in session:
+            # Controlla l'ultima attività
+            last_activity = session.get('last_activity')
+            if last_activity:
+                last_activity = datetime.fromisoformat(last_activity)
+                if datetime.now() - last_activity > timedelta(hours=1):
+                    app.logger.warning(f"Sessione scaduta per l'utente: {session.get('user')}")
+                    session.clear()
+                    return redirect(url_for('home'))
+            
+            # Aggiorna il timestamp dell'ultima attività
+            session['last_activity'] = datetime.now().isoformat()
+            
+    except Exception as e:
+        app.logger.error(f"Errore nel controllo della sessione: {str(e)}")
+        session.clear()
+        return redirect(url_for('home'))
+
+
 
 # Route per il login con Microsoft
 @app.route('/login/microsoft')
@@ -276,7 +343,7 @@ def microsoft_login():
 def microsoft_callback():
     code = request.args.get('code')
     if not code:
-        print("Parametri ricevuti:", request.args)  
+        app.logger.error("Codice di autorizzazione mancante nella callback Microsoft")
         return "Errore: codice di autorizzazione mancante", 400
 
     try:
@@ -346,7 +413,20 @@ def microsoft_callback():
 
         # Aggiorna o crea il documento utente
         user_ref.set(user_data, merge=True)
+
+        # Gestione della sessione (una sola volta)
+        session.clear()
+        session.permanent = True
         session['user'] = doc_id
+        session['login_time'] = datetime.now().isoformat()
+        session['last_activity'] = datetime.now().isoformat()
+        session['auth_method'] = 'microsoft'
+        session['user_email'] = encrypted_email
+        
+        # Ruota la sessione
+        rotate_session()
+        
+        app.logger.info(f"Login Microsoft completato con successo per l'utente: {doc_id}")
 
         return redirect(url_for('dashboard'))
 
@@ -375,8 +455,9 @@ def github_login():
 def github_callback():
     code = request.args.get('code')
     if not code:
+        app.logger.error("Codice di autorizzazione mancante nella callback GitHub")
         return "Errore: codice di autorizzazione mancante", 400
-
+    
     try:
         # Ottieni il token
         token_url = "https://github.com/login/oauth/access_token"
@@ -450,7 +531,21 @@ def github_callback():
 
         # Aggiorna o crea il documento utente
         user_ref.set(user_data, merge=True)
+        
+
+        # Gestione della sessione
+        session.clear()
+        session.permanent = True
         session['user'] = doc_id
+        session['login_time'] = datetime.now().isoformat()
+        session['last_activity'] = datetime.now().isoformat()
+        session['auth_method'] = 'github'
+        session['user_email'] = encrypted_email
+        
+        # Ruota la sessione
+        rotate_session()
+        
+        app.logger.info(f"Login GitHub completato con successo per l'utente: {doc_id}")
 
         return redirect(url_for('dashboard'))
 
@@ -474,34 +569,41 @@ def generate_token():
         
         # Genera un token_id univoco
         token_id = str(uuid.uuid4())
-        
+        jti = str(uuid.uuid4())
+
         # Genera il token con scadenza specificata
+        # Aggiunti più claims per sicurezza
         expires = timedelta(days=duration_days)
         token = create_access_token(
             identity=user_id, 
             expires_delta=expires,
             additional_claims={
                 "type": "api_token",
-                "token_id": token_id,  # Assicuriamoci che il token_id sia nei claims
-                "description": request.json.get('description', 'Token API')
+                "token_id": token_id,
+                "jti": jti,
+                "description": request.json.get('description', 'Token API'),
+                "created_at": datetime.now().isoformat(),
+                "auth_method": session.get('auth_method')
             }
         )
         
-        # Salva il token nel database
+        # Salva i dettagli del token nel database
         token_data = {
-            "token_id": token_id,  # Stesso token_id usato nei claims
+            "token_id": token_id,
+            "jti": jti,
             "user_id": user_id,
             "description": request.json.get('description', 'Token API'),
             "created_at": datetime.now().isoformat(),
             "expires_at": (datetime.now() + expires).isoformat(),
             "is_active": True,
-            "last_used": None
+            "last_used": None,
+            "auth_method": session.get('auth_method')
         }
         
         # Salva nel database
         db.collection('api_tokens').add(token_data)
+        app.logger.info(f"Token generato con ID: {token_id}")
 
-        print(f"Token generato con ID: {token_id}")  # Log per debug
 
         return jsonify({
             "token": token,
@@ -562,20 +664,66 @@ def revoke_token(token_id):
         token_doc = token_query[0]  # Prendi il primo (e unico) risultato
         token_data = token_doc.to_dict()
         
+        # Verifica proprietà del token
         if token_data['user_id'] != user_id:
+            app.logger.warning(f"Tentativo non autorizzato di revoca token: {token_id}")
             return jsonify({"error": "Non autorizzato"}), 401
+        
+        # Aggiungi alla blacklist
+        if 'jti' in token_data:
+            jwt_blacklist.add(token_data['jti'])
 
-        # Aggiorna il documento usando il reference del documento trovato
+        # Aggiorna il database
         token_doc.reference.update({
             "is_active": False,
-            "revoked_at": datetime.now().isoformat()
+            "revoked_at": datetime.now().isoformat(),
+            "revoked_by": user_id
         })
-
+        
+        app.logger.info(f"Token {token_id} revocato con successo")
         return jsonify({"message": "Token revocato con successo"})
 
     except Exception as e:
         print(f"Errore nella revoca del token: {str(e)}")  # Debug log
         return jsonify({"error": "Errore nella revoca del token"}), 500
+
+# per verificare il token
+@app.route('/api/token/verify', methods=['POST'])
+@jwt_required()
+def verify_token():
+    try:
+        current_token = get_jwt()
+        token_id = current_token.get('token_id')
+        
+        if not token_id:
+            return jsonify({"error": "Token non valido"}), 401
+            
+        # Verifica nel database
+        token_query = db.collection('api_tokens')\
+            .where('token_id', '==', token_id)\
+            .limit(1)\
+            .get()
+            
+        if not token_query or len(token_query) == 0:
+            return jsonify({"error": "Token non trovato"}), 401
+            
+        token_doc = token_query[0].to_dict()
+        
+        if not token_doc.get('is_active', False):
+            return jsonify({"error": "Token revocato"}), 401
+            
+        return jsonify({
+            "valid": True,
+            "token_info": {
+                "created_at": token_doc.get('created_at'),
+                "expires_at": token_doc.get('expires_at'),
+                "last_used": token_doc.get('last_used')
+            }
+        })
+        
+    except Exception as e:
+        app.logger.error(f"Errore nella verifica del token: {str(e)}")
+        return jsonify({"error": "Errore nella verifica"}), 500
 
 
 # API: Recupero saldo
@@ -1142,6 +1290,66 @@ def logout():
     response = redirect(url_for('home'))
     response.delete_cookie('session')
     return response
+
+
+# Endpoint di test per la sessione
+@app.route('/test/session')
+def test_session():
+    if 'user' not in session:
+        return jsonify({
+            'status': 'not_authenticated',
+            'message': 'Nessuna sessione attiva'
+        }), 401
+        
+    return jsonify({
+        'status': 'authenticated',
+        'session_data': {
+            'user': session.get('user'),
+            'login_time': session.get('login_time'),
+            'last_activity': session.get('last_activity'),
+            'auth_method': session.get('auth_method')
+        }
+    })
+
+# Endpoint di test per l'ID sessione
+@app.route('/test/session-id')
+def test_session_id():
+    if 'user' not in session:
+        return jsonify({
+            'status': 'not_authenticated',
+            'message': 'Nessuna sessione attiva'
+        }), 401
+        
+    return jsonify({
+        'status': 'authenticated',
+        # Usiamo i dati che abbiamo effettivamente nella sessione
+        'user_id': session.get('user'),
+        'created_at': session.get('login_time'),
+        'auth_method': session.get('auth_method')
+    })
+
+# Endpoint per testare la scadenza della sessione
+@app.route('/test/session-expiry')
+def test_session_expiry():
+    if 'user' not in session:
+        return jsonify({
+            'status': 'not_authenticated',
+            'message': 'Nessuna sessione attiva'
+        }), 401
+    
+    # Usa login_time invece di last_activity per il calcolo
+    login_time = datetime.fromisoformat(session.get('login_time'))
+    time_elapsed = datetime.now() - login_time
+    
+    return jsonify({
+        'status': 'authenticated',
+        'session_info': {
+            'login_time': session.get('login_time'),
+            'last_activity': session.get('last_activity'),
+            'time_elapsed_seconds': time_elapsed.total_seconds(),
+            'session_expires_in_seconds': 3600 - time_elapsed.total_seconds()  # 1 ora - tempo trascorso dal login
+        }
+    })
 
 
 # route principale
