@@ -952,9 +952,14 @@ input:focus, select:focus {
     }
 }
 
+/* Stili per i bottoni disabilitati */
+button.disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
 
 /* Toast notifications */
-
 .success-toast {
     position: fixed;
     bottom: 20px;

@@ -34,27 +34,113 @@ document.addEventListener('DOMContentLoaded', function() {
     loadDashboardData();
 });
 
+async function fetchWithCSRF(url, options = {}) {
+    // Ottieni il token CSRF dal backend
+    const csrfTokenResponse = await fetch('/csrf-token');
+    const csrfData = await csrfTokenResponse.json();
+    
+    // Aggiungi il token CSRF all'header della richiesta
+    options.headers = {
+        ...options.headers,
+        'X-CSRFToken': csrfData.csrf_token
+    };
+    // Aggiungi credenziali per includere i cookie
+    options.credentials = 'include';
+    return fetch(url, options);
+}
 
+async function handleApiRequest(url, options = {}) {
+    try {
+        let response;
+        
+        // Decide se usare fetchWithCSRF o fetch normale
+        if (options.method && ['POST', 'PUT', 'DELETE'].includes(options.method.toUpperCase())) {
+            response = await fetchWithCSRF(url, options);
+        } else {
+            response = await fetch(url, options);
+        }
+        
+        const data = await response.json();
+
+        // Gestione rate limiting
+        if (response.status === 429) {
+            const retryAfter = data.retry_after || 60;
+            
+            // Funzione per mostrare l'errore con countdown
+            const showErrorWithCountdown = (message) => {
+                const errorDiv = document.createElement('div');
+                errorDiv.className = 'error-toast';
+                errorDiv.textContent = message;
+                document.body.appendChild(errorDiv);
+                
+                // Countdown visivo
+                let remainingTime = retryAfter;
+                const countdownInterval = setInterval(() => {
+                    remainingTime--;
+                    errorDiv.textContent = `Limite raggiunto. Riprova tra ${remainingTime} secondi.`;
+                    
+                    if (remainingTime <= 0) {
+                        clearInterval(countdownInterval);
+                        errorDiv.remove();
+                    }
+                }, 1000);
+                
+                return errorDiv;
+            };
+            
+            // Mostra il messaggio di errore con countdown
+            showErrorWithCountdown(`Limite raggiunto. Riprova tra ${retryAfter} secondi.`);
+            
+            // Disabilita tutti i pulsanti
+            const buttons = document.querySelectorAll('button');
+            buttons.forEach(button => {
+                button.disabled = true;
+                button.classList.add('disabled');
+            });
+            
+            // Abilita di nuovo i pulsanti dopo il tempo di attesa
+            setTimeout(() => {
+                buttons.forEach(button => {
+                    button.disabled = false;
+                    button.classList.remove('disabled');
+                });
+            }, retryAfter * 1000);
+            
+            console.warn(`Rate limit exceeded. Retry after ${retryAfter} seconds.`, data);
+            return null;
+        }
+
+        // Gestione altri errori
+        if (!response.ok) {
+            throw new Error(data.error || 'Si è verificato un errore');
+        }
+        
+        return data;
+    } catch (error) {
+        console.error('Error:', error);
+        showError('Si è verificato un errore. Riprova più tardi.');
+        return null;
+    }
+}
 
 // Funzione per caricare i dati della dashboard
 async function loadDashboardData() {
     try {
-
-        // Carica il saldo (senza JWT)
-        const balanceResponse = await fetch('/api/balance');
-        const balanceData = await balanceResponse.json();
-        if (balanceData.balance !== undefined) {
+        // Carica il saldo usando handleApiRequest
+        const balanceData = await handleApiRequest('/api/balance');
+        if (balanceData && balanceData.balance !== undefined) {
             const balanceAmount = document.getElementById('balance-amount');
             if (balanceAmount) {
                 balanceAmount.textContent = `€ ${balanceData.balance.toFixed(2)}`;
-                // Inizialmente nascondiamo il saldo
                 balanceAmount.style.display = 'none';
             }
         }
-        // Carica le transazioni
-        const transactionsResponse = await fetch('/api/transactions');
-        const transactionsData = await transactionsResponse.json();
-        updateTransactionsList(transactionsData.transactions);
+
+        // Carica le transazioni usando handleApiRequest
+        const transactionsData = await handleApiRequest('/api/transactions');
+        if (transactionsData) {
+            updateTransactionsList(transactionsData.transactions);
+        }
 
         // Inizializza la sezione tassi di cambio
         initializeDashboard();
@@ -173,8 +259,7 @@ document.getElementById('jwtVerificationForm').addEventListener('submit', async 
 // Funzioni per la gestione dei token API
 async function loadActiveTokens() {
     try {
-        const response = await fetch('/api/tokens');
-        const data = await response.json();
+        const data = await handleApiRequest('/api/tokens');
         
         const tokensList = document.getElementById('tokens-list');
         if (!tokensList) return;
@@ -216,7 +301,7 @@ document.getElementById('generate-token-form')?.addEventListener('submit', async
     const duration = parseInt(document.getElementById('token-duration').value);
 
     try {
-        const response = await fetch('/api/token/generate', {
+        const response = await fetchWithCSRF('/api/token/generate', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -226,7 +311,7 @@ document.getElementById('generate-token-form')?.addEventListener('submit', async
                 duration: duration
             })
         });
-
+        
         const data = await response.json();
         
         if (response.ok) {
@@ -258,13 +343,13 @@ async function revokeToken(tokenId) {
     try {
         console.log('Revocando token:', tokenId); // Debug
 
-        const response = await fetch(`/api/token/revoke/${tokenId}`, {
+        const response = await fetchWithCSRF(`/api/token/revoke/${tokenId}`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             }
         });
-
+        
         if (response.ok) {
             showSuccess('Token revocato con successo');
             // Ricarica la lista dei token
@@ -349,7 +434,12 @@ document.getElementById('depositForm').addEventListener('submit', async function
     const amount = document.getElementById('depositAmount').value;
     
     try {
-        const setupResponse = await fetch('/api/2fa/setup');
+        const setupResponse = await fetchWithCSRF('/api/2fa/setup', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            }
+        });
         const setupData = await setupResponse.json();
         
         if (setupData.qr_uri) {
@@ -394,7 +484,7 @@ document.getElementById('twoFactorForm').addEventListener('submit', async functi
     }
 
     try {
-        const response = await fetch('/api/deposit/verify-otp', {
+        const response = await fetchWithCSRF('/api/deposit/verify-otp', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -404,7 +494,7 @@ document.getElementById('twoFactorForm').addEventListener('submit', async functi
                 amount: parseFloat(amount)
             })
         });
-
+        
         const data = await response.json();
         
         if (response.ok) {
@@ -503,25 +593,22 @@ if (transactionForm) {
         };
 
         try {
-            // Verifica saldo
-            const balanceResponse = await fetch('/api/balance');
-            const balanceData = await balanceResponse.json();
+            // Verifica saldo usando handleApiRequest
+            const balanceData = await handleApiRequest('/api/balance');
             
-            if (balanceData.balance < amount) {
+            if (!balanceData || balanceData.balance < amount) {
                 showError('Saldo insufficiente per effettuare questa transazione');
                 return;
             }
 
-            // Verifica stato 2FA
-            const twoFAResponse = await fetch('/api/2fa/check-status');
-            const twoFAData = await twoFAResponse.json();
+            // Verifica stato 2FA usando handleApiRequest
+            const twoFAData = await handleApiRequest('/api/2fa/check-status');
 
             if (!twoFAData.is_configured) {
                 // Se 2FA non è configurato, usa il setup esistente
-                const setupResponse = await fetch('/api/2fa/setup');
-                const setupData = await setupResponse.json();
+                const setupData = await handleApiRequest('/api/2fa/setup');
                 
-                if (setupData.qr_uri) {
+                if (setupData && setupData.qr_uri) {
                     const qrCodeContainer = document.getElementById('qrCodeContainer');
                     qrCodeContainer.innerHTML = '';
                     
@@ -559,7 +646,7 @@ document.getElementById('transactionOtpForm').addEventListener('submit', async f
     try {
         console.log('Dati transazione:', transactionData); // Per debug
         
-        const response = await fetch('/api/transactions/verify', {
+        const data = await handleApiRequest('/api/transactions/verify', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -567,32 +654,28 @@ document.getElementById('transactionOtpForm').addEventListener('submit', async f
             body: JSON.stringify({ 
                 otp: code,
                 ...transactionData
-            })
+            }),
+            credentials: 'same-origin'  // Importante per i cookie
         });
 
-        const data = await response.json();
-        
-        if (!response.ok) {
-            throw new Error(data.error || 'Errore durante la transazione');
+        if (data) {
+            // Se la transazione va a buon fine
+            updateBalance(data.new_balance);
+            updateTransactionsList(data.transactions);
+            
+            // Chiudi il modale e pulisci i form
+            document.getElementById('transactionOtpModal').style.display = 'none';
+            document.getElementById('transaction-form').reset();
+            document.getElementById('transactionOtpForm').reset();
+            sessionStorage.removeItem('pendingTransaction');
+            
+            showSuccess('Transazione completata con successo');
         }
-
-        // Se la transazione va a buon fine
-        updateBalance(data.new_balance);
-        updateTransactionsList(data.transactions);
-        
-        // Chiudi il modale e pulisci i form
-        document.getElementById('transactionOtpModal').style.display = 'none';
-        document.getElementById('transaction-form').reset();
-        document.getElementById('transactionOtpForm').reset();
-        sessionStorage.removeItem('pendingTransaction');
-        
-        showSuccess('Transazione completata con successo');
     } catch (error) {
         console.error('Errore:', error);
         showError(error.message || 'Errore durante la transazione');
     }
 });
-
 
 // Tassi di cambio
 async function loadExchangeRates() {
@@ -635,7 +718,7 @@ async function convertCurrency() {
     }
 
     try {
-        const response = await fetch('/api/convert', {
+        const response = await fetchWithCSRF('/api/convert', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',

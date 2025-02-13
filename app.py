@@ -33,6 +33,7 @@ from flask_jwt_extended import (
     jwt_required, get_jwt
 )
 from datetime import datetime, timedelta
+from flask_seasurf import SeaSurf
 
 
 # Carica le variabili dal file .env
@@ -40,7 +41,16 @@ load_dotenv()
 
 app = Flask(__name__)
 
-
+# Inizializza SeaSurf
+csrf = SeaSurf(app)
+app.config.update({
+    'CSRF_DISABLE': False,
+    'CSRF_COOKIE_NAME': '_csrf_token',
+    'CSRF_HEADER_NAME': 'X-CSRFToken',
+    'CSRF_COOKIE_HTTPONLY': True,
+    'CSRF_COOKIE_SECURE': False,  # Usa False in sviluppo
+    'WTF_CSRF_ENABLED': True
+})
 
 # Carica le credenziali Firebase
 firebase_credentials_path = "C:/Users/giaco/Desktop/Sicurezza Informatica/2_ANNO/Sicurezza delle Architetture orientate ai Servizi/progetto/mobilebanking-security-firebase-adminsdk-7inp2-45ee538f3a.json"
@@ -147,7 +157,35 @@ def internal_error(error):
 def forbidden_error(error):
     return "Accesso negato", 403
 
+@app.errorhandler(400)
+def csrf_error(reason):
+    app.logger.warning(f"CSRF Error: {reason}")
+    return "Errore di protezione CSRF", 403
 
+@app.errorhandler(429)
+def ratelimit_handler(e):
+    retry_after = 60
+    if hasattr(e, 'description') and 'retry after' in str(e.description).lower():
+        try:
+            description = str(e.description)
+            retry_after = int(description.split('retry after ')[1].split(' ')[0])
+        except:
+            retry_after = 60  # Fallback a 60 secondi
+    
+    response = jsonify({
+        "error": "Troppi tentativi",
+        "message": f"Hai superato il limite di richieste. Attendi {retry_after} secondi prima di riprovare.",
+        "retry_after": retry_after,
+        "endpoint": request.endpoint,
+        "timestamp": datetime.now().isoformat()
+    })
+    # Logging dell'evento di rate limiting
+    app.logger.warning(f"Rate limit exceeded for endpoint {request.endpoint}")
+
+    if retry_after:
+        response.headers['Retry-After'] = str(retry_after)
+    
+    return response, 429
 
 # Funzioni helper per la crittografia
 def encrypt_data(data, key):
@@ -339,6 +377,8 @@ def microsoft_login():
 
 
 # callback di Microsoft
+# Disabilitato CSRF per le rotte di autenticazione OAuth
+@csrf.exempt
 @app.route('/login/microsoft/callback')
 def microsoft_callback():
     code = request.args.get('code')
@@ -451,6 +491,8 @@ def github_login():
 
 
 # Callback di GitHub
+# Disabilitato CSRF per le rotte di autenticazione OAuth
+@csrf.exempt
 @app.route('/login/github/callback')
 def github_callback():
     code = request.args.get('code')
@@ -554,14 +596,33 @@ def github_callback():
         print(traceback.format_exc())
         return "Si è verificato un errore durante l'autenticazione", 500
 
+# route per la gestione del CSRF token
+@app.route('/csrf-token', methods=['GET'])
+def get_csrf_token():
+    token = csrf._get_token()
+    app.logger.info(f"Generated CSRF Token: {token}")
+    return jsonify({
+        'csrf_token': token,
+        'csrf_cookie_name': app.config['CSRF_COOKIE_NAME']
+    })
 
 # Route per la generazione del JWT token
 @app.route('/api/token/generate', methods=['POST'])
 @limiter.limit("5 per minute")
 def generate_token():
+    # Log dettagliato per debug
+    app.logger.warning(f"Headers ricevuti: {dict(request.headers)}")
+    app.logger.warning(f"Cookies ricevuti: {request.cookies}")
+    # Stampa i valori specifici del CSRF
+    csrf_token_cookie = request.cookies.get('_csrf_token')
+    csrf_token_header = request.headers.get('X-CSRFToken')
+    
+    app.logger.warning(f"CSRF Token dal Cookie: {csrf_token_cookie}")
+    app.logger.warning(f"CSRF Token dall'Header: {csrf_token_header}")
+
     if 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
-
+    
     try:
         user_id = session['user']
         # Forziamo la durata a 7 giorni
@@ -729,7 +790,7 @@ def verify_token():
 # API: Recupero saldo
 @app.route('/api/balance')
 @jwt_required(optional=True)
-@limiter.limit("60 per minute")
+@limiter.limit("10 per minute, 100 per hour")
 def get_balance():
     jwt_token = get_jwt()
     
@@ -823,7 +884,7 @@ def get_transactions():
 
 # transazioni verificate
 @app.route('/api/transactions/verify', methods=['POST'])
-@limiter.limit("10 per minute")
+@limiter.limit("3 per minute, 20 per hour") # più restrittivo perchè è un endpoint critico
 def verify_transaction():
     if 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
@@ -931,7 +992,7 @@ def verify_transaction():
 
 # API: Creazione di una nuova transazione
 @app.route('/api/transactions', methods=['POST'])
-@limiter.limit("10 per minute")
+@limiter.limit("3 per minute, 20 per hour") # anche qui, per forza di cose lo stesso rate limit dell'endpoint di verifica delle transazioni
 def create_new_transaction():
     if 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
@@ -1020,7 +1081,7 @@ def request_deposit_otp():
 
 # Endpoint per verificare l'OTP e completare il deposito
 @app.route('/api/deposit/verify-otp', methods=['POST'])
-@limiter.limit("20 per minute")
+@limiter.limit("3 per minute, 10 per hour")
 def verify_deposit_otp():
     try:
         data = request.json
@@ -1069,7 +1130,8 @@ def verify_deposit_otp():
 
 
 # route per il qr code iniziale
-@app.route('/api/2fa/setup')
+@app.route('/api/2fa/setup', methods=['GET', 'POST'])
+@limiter.limit("3 per minute, 10 per hour")  # Restrittivo per sicurezza
 def get_2fa_setup():
     if 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
@@ -1114,6 +1176,7 @@ def get_2fa_setup():
 
 # ROUTE per conferma 2fa
 @app.route('/api/2fa/confirm-setup', methods=['POST'])
+@limiter.limit("3 per minute, 10 per hour")
 def confirm_2fa_setup():
     if 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
@@ -1131,6 +1194,7 @@ def confirm_2fa_setup():
 
 # route per il check-status 2fa
 @app.route('/api/2fa/check-status')
+@limiter.limit("10 per minute")
 def check_2fa_status():
     if 'user' not in session:
         return jsonify({"error": "Non autorizzato"}), 401
@@ -1148,8 +1212,6 @@ def check_2fa_status():
     except Exception as e:
         print(f"Errore nel controllo stato 2FA: {e}")
         return jsonify({"error": "Errore interno"}), 500
-
-
 
 # route per i tassi di cambio con l'API
 @app.route('/api/exchange-rates')
