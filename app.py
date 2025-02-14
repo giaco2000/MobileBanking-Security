@@ -52,6 +52,13 @@ app.config.update({
     'WTF_CSRF_ENABLED': True
 })
 
+# Limiti transazioni
+TRANSACTION_LIMITS = {
+    'single_transaction': 10000.00,  # Limite massimo per singola transazione
+    'daily_limit': 50000.00,        # Limite giornaliero
+    'monthly_limit': 100000.00      # Limite mensile
+}
+
 # Carica le credenziali Firebase
 firebase_credentials_path = "C:/Users/giaco/Desktop/Sicurezza Informatica/2_ANNO/Sicurezza delle Architetture orientate ai Servizi/progetto/mobilebanking-security-firebase-adminsdk-7inp2-45ee538f3a.json"
 cred = credentials.Certificate(firebase_credentials_path)
@@ -187,27 +194,95 @@ def ratelimit_handler(e):
     
     return response, 429
 
+# Formato dei dati criptati:
+# [16 bytes salt][16 bytes tag][resto ciphertext]
 # Funzioni helper per la crittografia
 def encrypt_data(data, key):
+    """
+    Cripta i dati usando AES-GCM con salt dinamico.
+    Formato output: [16 bytes salt][16 bytes tag][resto ciphertext]
+    """
     try:
-        cipher = AES.new(bytes.fromhex(key), AES.MODE_EAX)
-        nonce = cipher.nonce
+        # Genera salt casuale
+        salt = get_random_bytes(16)
+        
+        # Usa il salt per derivare una chiave unica per questa crittografia
+        cipher = AES.new(bytes.fromhex(key), AES.MODE_GCM, nonce=salt)
+        
+        # Cripta i dati
         ciphertext, tag = cipher.encrypt_and_digest(data.encode('utf-8'))
-        return base64.b64encode(nonce + ciphertext).decode('utf-8')
+        
+        # Combina salt + tag + testo cifrato
+        final_data = salt + tag + ciphertext
+        
+        return base64.b64encode(final_data).decode('utf-8')
     except Exception as e:
         print(f"Errore durante la crittografia: {e}")
         raise
 
 def decrypt_data(encrypted_data, key):
+    """
+    Decripta i dati usando AES-GCM con salt.
+    Formato input atteso: [16 bytes salt][16 bytes tag][resto ciphertext]
+    """
     try:
+        # Decodifica il dato completo
         raw_data = base64.b64decode(encrypted_data)
-        nonce = raw_data[:16]
-        ciphertext = raw_data[16:]
-        cipher = AES.new(bytes.fromhex(key), AES.MODE_EAX, nonce=nonce)
-        return cipher.decrypt(ciphertext).decode('utf-8')
+        
+        # Estrai salt, tag e testo cifrato
+        salt = raw_data[:16]
+        tag = raw_data[16:32]
+        ciphertext = raw_data[32:]
+        
+        # Ricrea il cipher con lo stesso salt
+        cipher = AES.new(bytes.fromhex(key), AES.MODE_GCM, nonce=salt)
+        
+        # Decripta
+        plaintext = cipher.decrypt_and_verify(ciphertext, tag)
+        return plaintext.decode('utf-8')
     except Exception as e:
         print(f"Errore durante la decrittografia: {e}")
         raise
+
+# Prima delle route, insieme alle altre funzioni helper
+def check_transaction_limits(user_id, amount):
+    """
+    Verifica che la transazione rispetti i limiti configurati.
+    Restituisce (bool, str) dove bool indica se la transazione è permessa
+    e str contiene l'eventuale messaggio di errore.
+    """
+    try:
+        if amount > TRANSACTION_LIMITS['single_transaction']:
+            return False, f"Importo superiore al limite massimo di €{TRANSACTION_LIMITS['single_transaction']:,.2f}"
+
+        # Calcola totale giornaliero
+        today = datetime.now().date()
+        daily_transactions = db.collection('users').document(user_id).get().to_dict().get('transactions', [])
+        daily_total = sum(
+            t['amount'] for t in daily_transactions 
+            if t['type'] == 'out' 
+            and datetime.fromisoformat(t['date']).date() == today
+        )
+
+        if daily_total + amount > TRANSACTION_LIMITS['daily_limit']:
+            return False, f"Superato il limite giornaliero di €{TRANSACTION_LIMITS['daily_limit']:,.2f}"
+
+        # Calcola totale mensile
+        current_month = today.replace(day=1)
+        monthly_total = sum(
+            t['amount'] for t in daily_transactions 
+            if t['type'] == 'out' 
+            and datetime.fromisoformat(t['date']).date().replace(day=1) == current_month
+        )
+
+        if monthly_total + amount > TRANSACTION_LIMITS['monthly_limit']:
+            return False, f"Superato il limite mensile di €{TRANSACTION_LIMITS['monthly_limit']:,.2f}"
+
+        return True, ""
+
+    except Exception as e:
+        app.logger.error(f"Errore nel controllo limiti: {str(e)}")
+        return False, "Errore nel controllo dei limiti"
 
 
 # Validazione IBAN lato server
@@ -903,6 +978,12 @@ def verify_transaction():
         if not validate_iban(data['iban']):
             return jsonify({"error": "IBAN non valido. Formato richiesto: IT00X0000000000000000000000"}), 400
 
+        # Verifica limiti transazione (NUOVO)
+        transaction_amount = float(data['amount'])
+        is_allowed, limit_message = check_transaction_limits(session['user'], transaction_amount)
+        if not is_allowed:
+            app.logger.warning(f"Tentativo di transazione oltre i limiti per l'utente {session['user']}: {limit_message}")
+            return jsonify({"error": limit_message}), 400
 
         # Ottieni il documento utente
         user_ref = db.collection('users').document(session['user'])
