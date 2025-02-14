@@ -438,18 +438,25 @@ def check_session_expiry():
 @app.route('/login/microsoft')
 @limiter.limit("5 per minute")
 def microsoft_login():
+    # Genera uno state unico e crittograficamente sicuro
+    state = secrets.token_urlsafe(32)
+    
+    # Salva lo state in sessione con un timestamp
+    session['microsoft_oauth_state'] = {
+        'value': state,
+        'created_at': datetime.now().isoformat()
+    }
     microsoft_auth_url = "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
     params = {
         "client_id": os.getenv("MICROSOFT_CLIENT_ID"),
         "response_type": "code",
         "redirect_uri": os.getenv("MICROSOFT_REDIRECT_URI"),
         "scope": "openid profile email user.read",
+        "state": state, 
         "response_mode": "query"
     }
     auth_url = f"{microsoft_auth_url}?{'&'.join([f'{k}={v}' for k, v in params.items()])}"
     return redirect(auth_url)
-
-
 
 # callback di Microsoft
 # Disabilitato CSRF per le rotte di autenticazione OAuth
@@ -457,10 +464,30 @@ def microsoft_login():
 @app.route('/login/microsoft/callback')
 def microsoft_callback():
     code = request.args.get('code')
+    state_param = request.args.get('state')
     if not code:
         app.logger.error("Codice di autorizzazione mancante nella callback Microsoft")
-        return "Errore: codice di autorizzazione mancante", 400
+        return "Errore: parametri mancanti", 400
 
+    # Recupera lo state salvato in sessione
+    saved_state_data = session.get('microsoft_oauth_state')
+    # Controlli di sicurezza sullo state
+    if not saved_state_data:
+        app.logger.error("Nessuno state trovato in sessione")
+        return "Errore di autenticazione", 400
+    # Verifica che lo state corrisponda
+    if state_param != saved_state_data['value']:
+        app.logger.error("Mismatch nello state di autenticazione")
+        return "Errore: autenticazione non valida", 400
+
+    # Verifica temporale dello state (scadenza 15 minuti)
+    state_created = datetime.fromisoformat(saved_state_data['created_at'])
+    if datetime.now() - state_created > timedelta(minutes=15):
+        app.logger.error("State scaduto")
+        return "Sessione di autenticazione scaduta", 400
+
+    # Rimuovi lo state dopo la verifica (usa-una-volta)
+    session.pop('microsoft_oauth_state', None)
     try:
         # Ottieni il token
         token_url = "https://login.microsoftonline.com/common/oauth2/v2.0/token"
@@ -546,10 +573,8 @@ def microsoft_callback():
         return redirect(url_for('dashboard'))
 
     except Exception as e:
-        print(f"Errore durante l'autenticazione Microsoft:")
-        print(traceback.format_exc())
-        return "Si è verificato un errore durante l'autenticazione", 500
-
+        app.logger.error(f"Errore durante l'autenticazione: {str(e)}")
+        return "Errore interno", 500
 
 # Route per GitHub
 @app.route('/login/github')

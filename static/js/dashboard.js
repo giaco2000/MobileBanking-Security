@@ -112,14 +112,16 @@ async function handleApiRequest(url, options = {}) {
 
         // Gestione altri errori
         if (!response.ok) {
-            throw new Error(data.error || 'Si è verificato un errore');
+            throw {
+                message: data.error || 'Si è verificato un errore',
+                response: { data }
+            };
         }
         
         return data;
     } catch (error) {
         console.error('Error:', error);
-        showError('Si è verificato un errore. Riprova più tardi.');
-        return null;
+        throw error; // Propaga l'errore invece di gestirlo qui
     }
 }
 
@@ -644,8 +646,6 @@ document.getElementById('transactionOtpForm').addEventListener('submit', async f
     const transactionData = JSON.parse(sessionStorage.getItem('pendingTransaction'));
     
     try {
-        console.log('Dati transazione:', transactionData); // Per debug
-        
         const data = await handleApiRequest('/api/transactions/verify', {
             method: 'POST',
             headers: {
@@ -673,7 +673,7 @@ document.getElementById('transactionOtpForm').addEventListener('submit', async f
         }
     } catch (error) {
         console.error('Errore:', error);
-        showError(error.message || 'Errore durante la transazione');
+        showError(error.response?.data?.error || error.message || 'Errore durante la transazione');
     }
 });
 
