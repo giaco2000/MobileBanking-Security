@@ -1505,7 +1505,7 @@ def test_session_expiry():
             'message': 'Nessuna sessione attiva'
         }), 401
     
-    # Usa login_time invece di last_activity per il calcolo
+    # Usa login_time invece di last_activity per il calcolo, EFFETTUATO TEST per verifica
     login_time = datetime.fromisoformat(session.get('login_time'))
     time_elapsed = datetime.now() - login_time
     

@@ -44,7 +44,7 @@ async function fetchWithCSRF(url, options = {}) {
         ...options.headers,
         'X-CSRFToken': csrfData.csrf_token
     };
-    // Aggiungi credenziali per includere i cookie
+    // Aggiungi credenziali per includere il session cookie
     options.credentials = 'include';
     return fetch(url, options);
 }
@@ -164,7 +164,7 @@ function toggleBalanceVisibility() {
     }
 }
 
-// Funzione per copiare il codice dell'esempio
+// Funzione per copiare il codice dell'esempio, in maniera automatica
 async function copyCode(button) {
     const code = button.dataset.code;
     try {
@@ -428,7 +428,7 @@ window.onclick = function(event) {
 }
 
 
-// Aggiorniamo anche il gestore del deposito per usare 2FA
+// Aggiornato anche il gestore del deposito per usare 2FA, per risolvere errore emerso con l'autenticazione 2FA
 // Gestione del form di deposito
 document.getElementById('depositForm').addEventListener('submit', async function(e) {
     e.preventDefault();
