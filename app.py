@@ -84,15 +84,15 @@ app.config.update(
 # Logging per debugging sessione
 app.logger.setLevel(logging.INFO)
 
-"""
+
 # Genera una chiave sicura di 32 bytes (256 bit)
 jwt_key = secrets.token_hex(32)
 print(f"JWT_SECRET_KEY={jwt_key}")
-"""
+
 
 # Configurazione JWT
-app.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET_KEY")  # Aggiungi questa nel .env
-app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)  # Token validi per 1 giorno
+app.config['JWT_SECRET_KEY'] = os.getenv("JWT_SECRET_KEY") 
+app.config['JWT_ACCESS_TOKEN_EXPIRES'] = timedelta(days=1)  
 jwt = JWTManager(app)
 
 # Blacklist per token JWT revocati
@@ -125,7 +125,7 @@ talisman = Talisman(
             "'self'", 
             "https://alcdn.msauth.net", 
             "https://cdn.jsdelivr.net",
-            "https://cdnjs.cloudflare.com",  # Aggiunta questa riga per il qr code
+            "https://cdnjs.cloudflare.com",  #  questa riga è fondamentale per il qr code
             "'unsafe-inline'"
         ],
         'style-src': ["'self'", "https://fonts.googleapis.com", "'unsafe-inline'"],
@@ -725,7 +725,7 @@ def generate_token():
     
     try:
         user_id = session['user']
-        # Forziamo la durata a 7 giorni
+        # Forzo la durata a 7 giorni
         duration_days = 7
         
         # Genera un token_id univoco
@@ -815,7 +815,7 @@ def revoke_token(token_id):
         
         user_id = session['user']
         
-        # Invece di cercare per document ID, cerchiamo per token_id nel campo token_id
+        
         token_query = db.collection('api_tokens').where('token_id', '==', token_id).limit(1).get()
         
         if not token_query or len(token_query) == 0:
@@ -913,7 +913,7 @@ def get_balance():
                 if not token_query or len(token_query) == 0 or not token_query[0].to_dict().get('is_active', False):
                     return jsonify({"error": "Token revocato o non valido"}), 401
 
-        # Procedi con il recupero del saldo
+        # procede con il recupero del saldo, per visualizzare i dati
         user_id = get_jwt_identity() if jwt_token else session['user']
         
         user_doc = db.collection('users').document(user_id).get()

@@ -1,1 +1,13 @@
-pip freeze > requirements.txt
+flask
+flask-session
+flask-limiter
+python-dotenv
+pycryptodome
+firebase-admin
+requests
+flask-talisman
+pyotp
+flask-jwt-extended
+flask-seasurf
+python-dateutil
+uuid
