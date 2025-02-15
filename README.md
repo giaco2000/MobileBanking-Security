@@ -1065,14 +1065,14 @@ profile
 1. Vai alle [Impostazioni Sviluppatore GitHub](https://github.com/settings/developers)
 2. Clicca su "New OAuth App"
 3. Configura l'applicazione:
-  - Nome dell'applicazione: CryptoFolio
+  - Nome dell'applicazione: MobileBankingSecurity
   - URL della homepage: `http://localhost:5000` (sviluppo) o il tuo URL di produzione
   - URL di callback per l'autorizzazione: 
     - `http://localhost:5000/auth/callback/github` (sviluppo)
     - `https://https://*.ngrok-free.app/auth/callback/github`
 4. Copia l'ID Client e il Segreto Client nel tuo file `.env`
 
-Durante ogni nuovo avvio dell'applicazione, sarà necessario configurare URL di callback per l'autorizzazione di Google e di Github con il link prodotto da ngrok.
+Durante ogni nuovo avvio dell'applicazione, sarà necessario configurare URL di callback per l'autorizzazione di Microsoft e di Github con il link prodotto da ngrok.
 
 ## Configurazione Firebase
 
