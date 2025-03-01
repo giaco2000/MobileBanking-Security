@@ -1,13 +1,14 @@
 # **Mobile Banking Security Project**
 # **Università Degli Studi di Bari Aldo Moro**
-**Laurea Magistrale in Sicurezza Informatica**
-**Corso: Sicurezza delle architetture orientate ai serivizi**
+**Corso di Laurea Magistrale in Sicurezza Informatica**
 
-**Studente: Giacomo Pagliara**
+**Corso**: *Sicurezza delle Architetture Orientate ai Serivizi*
 
-**Docente: Prof. Giulio Mallardi**
+**Docente**: *Prof. Giulio Mallardi*
 
+**Studente**: *Giacomo Pagliara*
 
+## Introduzione
 Il progetto consiste in una web app per la simulazione di un sistema di Mobile Bnaking, finalizzata a gestire operazioni bancarie standard in maniera sicura ed interattiva. L'applicazione prevede l'accesso tramite OAuth 2.0 (con Microsoft e GitHub), mette a disposizione funzionalità di gestione del proprio conto corrente virtuale e implementa diverse misure di sicurezza per proteggere i dati degli utenti e garantire l'integrità del modello stesso.
 
 ## Funzionalità
@@ -341,7 +342,7 @@ Questo endpoint gestisce la creazione di nuove transazioni dopo il superamento d
 
 
 ## Endpoint per il Recupero Transazioni
-**Rotta**: `/api/transactions`
+**Route**: `/api/transactions`
 **Metodo HTTP**: GET
 
 ### Descrizione
@@ -377,9 +378,11 @@ Questo endpoint permette di recuperare lo storico delle transazioni dell'utente.
 ## Route per la Gestione dei Token JWT
 JSON Web Tokens, standard RFC 7519, permette funzionalità di autenticazione tramite invio di documenti, in formato JSON, firmati o crittografati. Il JWT è composto da tre parti:
 
-Header: contiene informazioni riguardo l'algoritmo di hash per la generazione della firma (alg, solitamente HS256/HMAC-SHA256) e il tipo di JWT (typ)
-Payload: i dati che vengono trasmessi, in genere composto da tre campi: timestamp di emissione (iat), timestamp di scadenza (exp) e oggetto (sub). Possono esserci ulteriori campi/claims, come previsto dallo standard
-Signature: il campo in cui è contenuta la firma per verificare l'integrità del payload
+**Header**: contiene informazioni riguardo l'algoritmo di hash per la generazione della firma (alg, solitamente HS256/HMAC-SHA256) e il tipo di JWT (typ).
+
+**Payload**: i dati che vengono trasmessi, in genere composto da tre campi: timestamp di emissione (iat), timestamp di scadenza (exp) e oggetto (sub). Possono esserci ulteriori campi/claims, come previsto dallo standard.
+
+**Signature**: il campo in cui è contenuta la firma per verificare l'integrità del payload
 Il funzionamento del JWT è descritto nella seguente immagine:
 
 ![JWT](static/images/JWT.webp)
@@ -505,7 +508,7 @@ Questo endpoint gestisce la fase iniziale del processo di deposito, generando un
 - Validazione dell'importo del deposito
 - Generazione del QR code per 2FA (se non già configurato perche potrebbe essere configurato già con l'invio di una transazione, ovviamente verrà controllato sempre prima il saldo del conto)
 
-**CONSIGLIO**:configurare la 2FA attraverso il deposito, in modo tale da poter controllare prima il saldo.
+**CONSIGLIO**: Configurare la 2FA attraverso il deposito, in modo tale da poter controllare prima il saldo.
 
 ### Processo di Richiesta
 1. **Validazione Iniziale**:
@@ -745,7 +748,7 @@ Il sistema implementa una protezione multi-livello contro gli attacchi di tipo C
 
 ## Configurazioni Avanzate di Sicurezza
 
-### Configurazione Talisman: Protezione degli Header di Sicurezza
+### Configurazione Talisman: Protezione attraverso gli Header di Sicurezza
 
 #### Definizione
 Talisman è un'estensione di Flask che aggiunge header di sicurezza HTTP cruciali per proteggere l'applicazione da vari attacchi web. Semplifica l'aggiunta di header di sicurezza alle risposte HTTP. In pratica, aiuta a proteggere il sito contro attacchi comuni (come XSS e clickjacking) forzando l'uso di HTTPS, abilitando HSTS, configurando il Content Security Policy (CSP) e impostando opzioni di sicurezza per i cookie.
@@ -772,8 +775,8 @@ talisman = Talisman(
     - Indica al browser di utilizzare solo connessioni HTTPS
     - Previene attacchi di downgrade del protocollo
 
-### Configurazione SeaSurf: Protezione CSRF
-### Concetto di CSRF
+### Configurazione SeaSurf: Protezione contro attacchi CSRF
+### SeaSurf e Attcchi CSRF
 SeaSurf è un'estensione per Flask pensata per proteggere l'applicazione da attacchi CSRF (Cross-Site Request Forgery). In pratica, genera e verifica automaticamente dei token di sicurezza nelle richieste (come POST, PUT e DELETE) per assicurarsi che siano legittime. L'implementazione è semplice: una volta importato,bisognerà inizializzarlo con l'app Flask e poi includere il token nei form (o nelle chiamate AJAX) tramite la funzione globale csrf_token(). Inoltre, si possono configurare vari parametri (come la durata del token, i cookie, ecc.) e, se necessario, escludere determinate route dalla validazione utilizzando il decoratore @csrf.exempt. 
 Inoltre, Cross-Site Request Forgery è un attacco che induce l'utente a eseguire azioni indesiderate su un'applicazione web autenticata.
 
@@ -994,11 +997,14 @@ git clone https://github.com/giaco2000/mobile-banking-security.git
 cd mobile-banking-security
 ```
 ### Installazione Dipendenze
+```bash
 pip install -r requirements.txt
+```
 
 ### Configurazione delle Variabili d'Ambiente
-File .env
-Creare un file .env nella root del progetto con le seguenti variabili:
+**File ".env"**
+
+Creare un file *".env"* nella root del progetto con le seguenti variabili:
 ```bash
 # Chiavi Segrete
 SECRET_KEY=your_flask_secret_key
@@ -1032,7 +1038,7 @@ EXCHANGE_RATE_API_KEY=your_exchangerate_api_key
 #### Dettagli Registrazione
 - **Nome**: Scegliere un nome per l'applicazione (es. MobileBankingSecurity)
 - **Supported account types**: 
- - Consigliato: "Accounts in any organizational directory (Any Microsoft Entra ID directory - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)"
+  - **Consigliato**: "Accounts in any organizational directory (Any Microsoft Entra ID directory - Multitenant) and personal Microsoft accounts (e.g. Skype, Xbox)"
 
 ### Configurazione Redirect URI
 1. Nella sezione "Authentication"
@@ -1051,14 +1057,16 @@ EXCHANGE_RATE_API_KEY=your_exchangerate_api_key
 
 Permessi API
 
-Andare su "API permissions"
-Aggiungere permessi:
+Andare su *"API permissions"*
 
-Microsoft Graph
+Aggiungere i seguenti permessi:
+
+*Microsoft Graph*
+
 Permessi delegati:
-email
-openid
-profile
+- *email*
+- *openid*
+- *profile*
 
 ### Configurazione GitHub OAuth
 
