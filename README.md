@@ -776,7 +776,7 @@ talisman = Talisman(
     - Previene attacchi di downgrade del protocollo
 
 ### Configurazione SeaSurf: Protezione contro attacchi CSRF
-### SeaSurf e Attcchi CSRF
+### SeaSurf e Attacchi CSRF
 SeaSurf è un'estensione per Flask pensata per proteggere l'applicazione da attacchi CSRF (Cross-Site Request Forgery). In pratica, genera e verifica automaticamente dei token di sicurezza nelle richieste (come POST, PUT e DELETE) per assicurarsi che siano legittime. L'implementazione è semplice: una volta importato,bisognerà inizializzarlo con l'app Flask e poi includere il token nei form (o nelle chiamate AJAX) tramite la funzione globale csrf_token(). Inoltre, si possono configurare vari parametri (come la durata del token, i cookie, ecc.) e, se necessario, escludere determinate route dalla validazione utilizzando il decoratore @csrf.exempt. 
 Inoltre, Cross-Site Request Forgery è un attacco che induce l'utente a eseguire azioni indesiderate su un'applicazione web autenticata.
 
